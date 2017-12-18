@@ -124,31 +124,30 @@ class SelectorCV(ModelSelector):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         # TODO implement model selection using CV
-        split_method = KFold(2)
+        split_method = KFold()
         best_score = -float("inf")
         best_model = None
 
-        #try:
-        for cv_train_idx, cv_test_idx in split_method.split(self.sequences):
-            # define model
-            model = GaussianHMM(n_components=self.n_constant, covariance_type="diag", n_iter=1000,
-                                random_state=self.random_state, verbose=False)
+        try:
+            for cv_train_idx, cv_test_idx in split_method.split(self.sequences):
 
-            # get training samples
-            train_X = self.X[cv_train_idx]
-            train_lengths = self.lengths[cv_train_idx]
-            # get testing samples
-            test_X = self.X[cv_test_idx]
-            test_lengths = self.lengths[cv_test_idx]
-            # train the model
-            model = model.fit(train_X, train_lengths)
-            # test the model
-            score = model.score(test_X, test_lengths)
-            if score > best_score:
-                best_score = score
-                best_model = model
-        #except:
-        #    return None
+                # define model
+                model = GaussianHMM(n_components=self.n_constant, covariance_type="diag", n_iter=1000,
+                                    random_state=self.random_state, verbose=False)
 
-        return best_model
+                # get training samples
+                train_X, train_lengths = combine_sequences(cv_train_idx, self.sequences)
+                # get testing samples
+                test_X, test_lengths = combine_sequences(cv_test_idx, self.sequences)
+                # train the model
+                model = model.fit(train_X, train_lengths)
+                # test the model
+                score = model.score(test_X, test_lengths)
+                if score > best_score:
+                    best_score = score
+                    best_model = model
+            return best_model
+        except:
+            return None
+
 

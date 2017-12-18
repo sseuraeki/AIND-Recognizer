@@ -77,8 +77,26 @@ class SelectorBIC(ModelSelector):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         # TODO implement model selection based on BIC scores
-        raise NotImplementedError
 
+        lowerest_BIC = float("inf")
+        best_model = None
+
+        for n in range(self.min_n_components, self.max_n_components):
+            try:
+                # likelihood score
+                L = self.base_model(n).score
+                # number of parameters(features)
+                p = self.X.shape[1]
+                # number of data points(sample)
+                N = self.X.shape[0]
+                # compute BIC
+                BIC = -2 * np.log(L) + p * np.log(N)
+                if BIC < lowerest_BIC:
+                    lowerest_BIC = BIC
+                    best_model = self.base_model(n)
+            except:
+                pass
+        return best_model
 
 class SelectorDIC(ModelSelector):
     ''' select best model based on Discriminative Information Criterion
@@ -106,4 +124,31 @@ class SelectorCV(ModelSelector):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         # TODO implement model selection using CV
-        raise NotImplementedError
+        split_method = KFold(2)
+        best_score = -float("inf")
+        best_model = None
+
+        #try:
+        for cv_train_idx, cv_test_idx in split_method.split(self.sequences):
+            # define model
+            model = GaussianHMM(n_components=self.n_constant, covariance_type="diag", n_iter=1000,
+                                random_state=self.random_state, verbose=False)
+
+            # get training samples
+            train_X = self.X[cv_train_idx]
+            train_lengths = self.lengths[cv_train_idx]
+            # get testing samples
+            test_X = self.X[cv_test_idx]
+            test_lengths = self.lengths[cv_test_idx]
+            # train the model
+            model = model.fit(train_X, train_lengths)
+            # test the model
+            score = model.score(test_X, test_lengths)
+            if score > best_score:
+                best_score = score
+                best_model = model
+        #except:
+        #    return None
+
+        return best_model
+

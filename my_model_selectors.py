@@ -78,22 +78,52 @@ class SelectorBIC(ModelSelector):
 
         # TODO implement model selection based on BIC scores
 
-        lowerest_BIC = float("inf")
+        best_score = float("inf")
         best_model = None
 
+        # iteration through n values
         for n in range(self.min_n_components, self.max_n_components):
             try:
+                # define model
+                model = GaussianHMM(n_components=n,
+                                    random_state=self.random_state).fit(self.X, self.lengths)
+
+                # now to compute the BIC score
+                # according to 'http://www2.imm.dtu.dk/courses/02433/doc/ch6_slides.pdf'
+                # BIC = -2 * log(L) + p * log(N)
+                # where L is the likelihood, p is the number of parameters,
+                # and N is the number of data points
+
                 # likelihood score
-                L = self.base_model(n).score
-                # number of parameters(features)
-                p = self.X.shape[1]
-                # number of data points(sample)
+                # according to the hmmlearn library document,
+                # score() returns log-likelihood score
+                logL = model.score(self.X, self.lengths)
+
+                # number of parameters
+                # this should be the sum of following:
+                # number of (transition probs, starting probs, means, variances)
+                # according to 'http://hmmlearn.readthedocs.io/en/latest/api.html#hmmlearn.hmm.GaussianHMM'
+                # we can get the shape of each array
+                tran_probs = model.n_components * model.n_components
+                start_probs = model.n_components
+                means = model.n_components * model.n_features
+                # since the default model covariance type is 'diag',
+                # according to the hmmlearn document,
+                # the covar array shape should be (n_components, n_features, n_features)
+                variances = model.n_components * model.n_features * model.n_features
+                p = tran_probs + start_probs + means + variances
+
+                # number of data points
                 N = self.X.shape[0]
+
                 # compute BIC
-                BIC = -2 * np.log(L) + p * np.log(N)
-                if BIC < lowerest_BIC:
-                    lowerest_BIC = BIC
-                    best_model = self.base_model(n)
+                BIC = -2 * logL + p * np.log(N)
+
+                # BIC is lower the better
+                # because p*np.log(N) gets larger as the model gets more complicated
+                if BIC < best_score: 
+                    best_score = BIC
+                    best_model = model
             except:
                 pass
         return best_model
@@ -112,8 +142,37 @@ class SelectorDIC(ModelSelector):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         # TODO implement model selection based on DIC scores
-        raise NotImplementedError
+        
+        best_score = -float("inf")
+        best_model = None
 
+        # iteration through n values
+        for n in range(self.min_n_components, self.max_n_components):
+            try:
+                # define the model
+                model = GaussianHMM(n_components=n,
+                                    random_state=self.random_state).fit(self.X, self.lengths)
+                # log(P(X(i)))
+                first_term = model.score(self.X, self.lengths)
+                # 1/(M-1)SUM(log(P(X(all but i))))
+                second_term = 0
+                for word in self.words:
+                    if word != self.this_word:
+                        word_, length_ = self.hwords[word]
+                        second_term += model.score(word_, length_)
+                second_term = second_term / (len(self.words) - 1)
+
+                score = first_term - second_term
+
+                # DIC's second term is penalty that gets bigger
+                # as the model gets more complicated
+                # since it's -second_term, DIC is bigger the better
+                if score > best_score:
+                    best_score = score
+                    best_model = model
+            except:
+                pass
+        return best_model
 
 class SelectorCV(ModelSelector):
     ''' select best model based on average log Likelihood of cross-validation folds
@@ -123,31 +182,50 @@ class SelectorCV(ModelSelector):
     def select(self):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-        # TODO implement model selection using CV
+        # TODO implement model selection using CV       
         split_method = KFold()
         best_score = -float("inf")
         best_model = None
 
-        try:
-            for cv_train_idx, cv_test_idx in split_method.split(self.sequences):
-
-                # define model
-                model = GaussianHMM(n_components=self.n_constant, covariance_type="diag", n_iter=1000,
-                                    random_state=self.random_state, verbose=False)
-
-                # get training samples
-                train_X, train_lengths = combine_sequences(cv_train_idx, self.sequences)
-                # get testing samples
-                test_X, test_lengths = combine_sequences(cv_test_idx, self.sequences)
-                # train the model
-                model = model.fit(train_X, train_lengths)
-                # test the model
-                score = model.score(test_X, test_lengths)
-                if score > best_score:
-                    best_score = score
-                    best_model = model
+        # if the length of sequences is less than 3,
+        # it's meaningless to do KFold so here's an exception
+        if len(self.sequences) < 3:
+            # iterate through given components arguments
+            for n in range(self.min_n_components, self.max_n_components):
+                try:
+                    model = GaussianHMM(n_components=n, random_state=self.random_state)
+                    model = model.fit(self.X, self.lengths)
+                    score = model.score(self.X, self.lengths)
+                    if score > best_score:
+                        best_score = score
+                        best_model = model
+                except:
+                    pass
             return best_model
-        except:
-            return None
+
+        # else (length of sequences is 3 or longer)
+        for cv_train_idx, cv_test_idx in split_method.split(self.sequences):
+            # get training sample
+            train_X, train_lengths = combine_sequences(cv_train_idx, self.sequences)
+            # get testing sample
+            test_X, test_lengths = combine_sequences(cv_test_idx, self.sequences)
+
+            # iterate through given components
+            for n in range(self.min_n_components, self.max_n_components):
+                try:
+                    model = GaussianHMM(n_components=n, random_state=self.random_state)
+                    # train on training samples
+                    model = model.fit(train_X, train_lengths)
+                    # test on testing samples
+                    score = model.score(test_X, test_lengths)
+                    # score is just a simple log-likelihood score
+                    # so it's bigger the better
+                    if score > best_score:
+                        best_score = score
+                        best_model = model
+                except:
+                    pass
+
+        return best_model
 
 
